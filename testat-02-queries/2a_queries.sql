@@ -34,11 +34,7 @@ WITH Best_Products AS (SELECT pgroup             AS Typ,
                                   ORDER BY average_rating DESC
                                   )              AS Reihenfolge
                        FROM Product
-                                INNER JOIN (SELECT product_id, AVG(reviews.rating) AS rating
-                                            FROM (SELECT product_id, rating
-                                                  FROM Review) reviews
-                                            GROUP BY reviews.product_id) avg_ratings
-                                           ON Product.product_id = avg_ratings.product_id)
+                       WHERE average_rating IS NOT NULL)
 
 SELECT Typ, ProduktNr, Rating
 FROM Best_Products
@@ -54,9 +50,14 @@ Es filtert die Ergebnisse, um nur diejenigen Produkt-IDs einzuschließen,
 bei denen der Preis (price) NULL ist, was bedeutet, dass kein Angebot für diese Produkte vorliegt.
 */
 
-SELECT DISTINCT product_id AS "Produkte ohne Angebot"
-FROM Offer
-WHERE price IS NULL;
+SELECT DISTINCT of.product_id
+FROM offer of
+WHERE NOT EXISTS (
+    -- Unterabfrage
+    SELECT 1
+    FROM offer of2
+    WHERE of.product_id = of2.product_id
+      AND of2.price IS NOT NULL);
 
 /*
 4. Für welche Produkte ist das teuerste Angebot mehr als doppelt so teuer wie das preiswerteste?
@@ -87,8 +88,8 @@ FROM (SELECT product_id, rating
 WHERE reviews.rating = 1
    OR reviews.rating = 5
 GROUP BY reviews.product_id
-HAVING COUNT(DISTINCT CASE WHEN reviews.rating = 1 THEN reviews.product_id END) > 0
-   AND COUNT(DISTINCT CASE WHEN reviews.rating = 5 THEN reviews.product_id END) > 0;
+HAVING COUNT(CASE WHEN reviews.rating = 1 THEN reviews.product_id END) > 0
+   AND COUNT(CASE WHEN reviews.rating = 5 THEN reviews.product_id END) > 0;
 
 /*
 6. Für wieviele Produkte gibt es gar keine Rezension?
@@ -129,8 +130,7 @@ Dann werden die Ergebnisse nach Namen sortiert.
 SELECT name
 FROM person
 WHERE person_id IN (SELECT person_id FROM book_person)
-  AND person_id IN (SELECT person_id FROM dvd_person)
-  AND person_id IN (SELECT person_id FROM cd_person)
+  AND (person_id IN (SELECT person_id FROM dvd_person) OR person_id IN (SELECT person_id FROM cd_person))
 ORDER BY name;
 
 /*
@@ -183,7 +183,7 @@ FROM product_similars
 -- Wir verwenden die rekursive CTE "category_hierarchy", um die Hierarchie der Kategorien abzubilden.
 
 -- Schließlich fügen wir eine Bedingung hinzu, um sicherzustellen, dass die ähnlichen Produkte in verschiedenen Hauptkategorien liegen.
-WHERE ch1.root_category_id <> ch2.root_category_id;
+WHERE ch1.root_category_id != ch2.root_category_id;
 
 /*
 11. Welche Produkte werden in allen Filialen angeboten? Hinweis: Ihre Query muss so formuliert werden, dass sie für eine beliebige Anzahl von Filialen funktioniert.
@@ -205,44 +205,35 @@ HAVING COUNT(DISTINCT o.shop_id) = (SELECT COUNT(*) FROM Shop);
 
 -- 1. CTE: matching_products_cte
 -- Diese CTE identifiziert die Produkte, die in allen Filialen angeboten werden.
-WITH matching_products_cte AS (
-    SELECT o.product_id
-    FROM Offer o
-    GROUP BY o.product_id
-    HAVING COUNT(DISTINCT o.shop_id) = (SELECT COUNT(*) FROM Shop)
-),
+WITH matching_products_cte AS (SELECT o.product_id
+                               FROM Offer o
+                               GROUP BY o.product_id
+                               HAVING COUNT(DISTINCT o.shop_id) = (SELECT COUNT(*) FROM Shop)),
 
 -- 2. CTE: cheapest_prices_cte
 -- Diese CTE findet das preiswerteste Angebot für jedes Produkt aus der vorherigen CTE.
 -- Sie enthält die Produkt-ID, die Shop-ID und den Preis des günstigsten Angebots.
-     cheapest_prices_cte AS (
-         SELECT offer.product_id, offer.shop_id, offer.price
-         FROM offer
-                  INNER JOIN (
-             SELECT product_id, MIN(price) AS min_price
-             FROM offer
-             WHERE offer.product_id IN (SELECT product_id FROM matching_products_cte)
-             GROUP BY product_id
-         ) AS min_prices
-                             ON offer.product_id = min_prices.product_id
-                                 AND offer.price = min_prices.min_price
-     ),
+     cheapest_prices_cte AS (SELECT offer.product_id, offer.shop_id, offer.price
+                             FROM offer
+                                      INNER JOIN (SELECT product_id, MIN(price) AS min_price
+                                                  FROM offer
+                                                  WHERE offer.product_id IN (SELECT product_id FROM matching_products_cte)
+                                                  GROUP BY product_id
+                                                  ) AS min_prices
+                                                 ON offer.product_id = min_prices.product_id
+                                                     AND offer.price = min_prices.min_price),
 
 -- 3. CTE: leipzig_count_cte
 -- Diese CTE zählt, wie viele der preiswertesten Angebote in Leipzig verfügbar sind.
--- Angenommen, die Shop-ID für Leipzig ist 2.
-     leipzig_count_cte AS (
-         SELECT COUNT(*) AS leipzig_count
-         FROM cheapest_prices_cte
-         WHERE shop_id = 2
-     ),
+-- Die Shop-ID für Leipzig ist 2.
+     leipzig_count_cte AS (SELECT COUNT(*) AS leipzig_count
+                           FROM cheapest_prices_cte
+                           WHERE shop_id = 2),
 
 -- 4. CTE: total_count_cte
 -- Diese CTE zählt die Gesamtzahl der preiswertesten Angebote für die identifizierten Produkte.
-     total_count_cte AS (
-         SELECT COUNT(*) AS total_count
-         FROM cheapest_prices_cte
-     )
+     total_count_cte AS (SELECT COUNT(*) AS total_count
+                         FROM cheapest_prices_cte)
 
 -- Hauptabfrage: Berechnung des Prozentsatzes der Fälle, in denen das preiswerteste Angebot in Leipzig verfügbar ist.
 SELECT ROUND((leipzig_count_cte.leipzig_count * 100.0 / total_count_cte.total_count), 2) AS leipzig_cheapest_percentage

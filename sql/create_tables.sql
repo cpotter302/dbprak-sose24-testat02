@@ -118,6 +118,7 @@ CREATE TABLE Review
     review_id   serial      NOT NULL,
     customer_id varchar(30) NOT NULL,
     rating      integer     NOT NULL,
+    review_date date        NOT NULL,
     description text        NOT NULL,
     product_id  varchar(10) NOT NULL,
     CONSTRAINT "Review_pkey" PRIMARY KEY (review_id),
